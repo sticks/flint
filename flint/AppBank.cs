@@ -92,12 +92,6 @@ namespace flint
             {
                 throw new ArgumentException("Provided byte array is not 78 bytes in size");
             }
-            if (BitConverter.IsLittleEndian)
-            {
-                Array.Reverse(bytes, 0, 4);
-                Array.Reverse(bytes, 4, 4);
-                Array.Reverse(bytes, 71, 4);
-            }
             return Util.ReadStruct<App>(bytes);
         }
 

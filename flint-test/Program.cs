@@ -2,6 +2,8 @@
 using flint;
 using SharpMenu;
 using System.Collections.Generic;
+using System.Configuration;
+using System.IO;
 
 namespace flint_test
 {
@@ -11,6 +13,7 @@ namespace flint_test
     {
         static void Main(string[] args)
         {
+            TestPack();
             Pebble pebble;
             SharpMenu<Action> menu;
             SharpMenu<Pebble> pebblemenu;
@@ -76,6 +79,7 @@ namespace flint_test
             menu.Add(() => pebble.SetTime(DateTime.Now), "Sync Pebble time");
             menu.Add(() => Console.WriteLine(pebble.GetAppbankContents().AppBank), "Get the contents of the app bank");
             menu.Add(() => DeleteApp(pebble), "Delete an app from the Pebble");
+            menu.Add(() => AddApp(pebble), "Add an app");
             menu.Add(() => pebble.Disconnect(), "Exit");
 
             pebble.OnDisconnect += pebble_OnDisconnect;
@@ -100,6 +104,67 @@ namespace flint_test
                 if (pebble.Alive) act();
             }
         }
+        static void TestPack()
+        {
+#if DEBUG
+            if (ConfigurationManager.AppSettings["watch-dir"] != null)
+            {
+                PebbleBundle bundle = new PebbleBundle(Path.Combine(ConfigurationManager.AppSettings["watch-dir"],"brains.pbw"));
+            }
+
+            var items = new object[] { (sbyte)-11, -123, UInt32.MaxValue, (byte)244, (uint)0,short.MinValue,ushort.MaxValue,Int32.MinValue,UInt32.MaxValue,"12345","1234","123456","DOES_NOT_MATTER","a" };
+            var data = Util.Pack("!biIBIhHlL5s5s5s0ss",items);
+            var ritems = Util.Unpack("!biIBIhHlL5s5s5s0ss", data);
+            if (items.Length != ritems.Length) throw new Exception();
+            if ((sbyte)items[0] != (sbyte)ritems[0]) throw new Exception();
+            if ((int)items[1] != (int)ritems[1]) throw new Exception();
+            if ((uint)items[2] != (uint)ritems[2]) throw new Exception();
+            if ((byte)items[3] != (byte)ritems[3]) throw new Exception();
+            if ((uint)items[4] != (uint)ritems[4]) throw new Exception();
+            if ((short)items[5] != (short)ritems[5]) throw new Exception();
+            if ((ushort)items[6] != (ushort)ritems[6]) throw new Exception();
+            if ((int)items[7] != (int)ritems[7]) throw new Exception();
+            if ((uint)items[8] != (uint)ritems[8]) throw new Exception();
+            if ((string)items[9] != (string)ritems[9]) throw new Exception(); // normal string
+            if ((string)items[10] != (string)ritems[10]) throw new Exception(); // shorter than expected
+            if (((string)items[11]).Substring(0,5) != (string)ritems[11]) throw new Exception(); // longer than expected
+            if ("" != (string)ritems[12]) throw new Exception(); // empty string
+            if ((string)items[13] != (string)ritems[13]) throw new Exception(); // implied string length of 1
+#endif
+        }
+
+        static void AddApp(Pebble pebble)
+        {
+            var watchdir = ConfigurationManager.AppSettings["watch-dir"];
+            if (watchdir == null)
+            {
+                Console.WriteLine("Missing .config entry for 'watch-dir'");
+                return;
+            }
+            if (!Directory.Exists(watchdir))
+            {
+                Console.WriteLine("watch-dir not found: {0}", watchdir);
+                return;
+            }
+            var appbank = pebble.GetAppbankContents().AppBank;
+            var applist = appbank.Apps;
+            if (applist.Count == appbank.Size)
+            {
+                Console.WriteLine("All {0} banks are full", appbank.Size);
+                return;
+            }
+            try
+            {
+                Console.WriteLine("Choose an app to install");
+                var watches = Directory.GetFiles(watchdir,"*.pbw");
+                var result = SharpMenu<string>.WriteAndPrompt(watches);
+                pebble.InstallApp(Path.Combine(watchdir,result),applist.Count);
+            }
+            catch(Exception ex)
+            {
+                Console.WriteLine(ex.Message);
+            }
+        }
 
         static void DeleteApp(Pebble pebble)
         {
@@ -107,7 +172,7 @@ namespace flint_test
             Console.WriteLine("Choose an app to remove");
             AppBank.App result = SharpMenu<AppBank.App>.WriteAndPrompt(applist);
             AppbankInstallMessageEventArgs ev = pebble.RemoveApp(result);
-            Console.WriteLine(ev.MsgType);
+            if (ev!=null) Console.WriteLine(ev.MsgType);
         }
 
         static void pebble_OnDisconnect(object sender, EventArgs e)

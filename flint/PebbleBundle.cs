@@ -207,15 +207,17 @@ namespace flint
 
         ZipFile Bundle;
         BundleManifest Manifest;
+        public byte[] Binary;
+        public byte[] ResourcesBinary;
 
         /// <summary>
         /// Create a new PebbleBundle from a .pwb file and parse its metadata.
         /// </summary>
         /// <param name="path">The relative or full path to the file.</param>
+        
         public PebbleBundle(String path)
         {
             Stream jsonstream;
-            Stream binstream;
 
             FullPath = Path.GetFullPath(path);
             Bundle = ZipFile.Read(FullPath);
@@ -244,19 +246,38 @@ namespace flint
             else
             {
                 BundleType = BundleTypes.Application;
-                if (Bundle.ContainsEntry(Manifest.Application.Filename))
-                {
-                    binstream = Bundle[Manifest.Application.Filename].OpenReader();
-                }
-                else
+                if (!Bundle.ContainsEntry(Manifest.Application.Filename))
                 {
                     String format = "App file {0} not found in archive";
                     throw new ArgumentException(String.Format(format, Manifest.Application.Filename));
+                    
                 }
 
-                Application = Util.ReadStruct<ApplicationMetadata>(binstream);
-                binstream.Close();
+                Binary = ReadBinary(Manifest.Application.Filename);
+                Application = Util.ReadStruct<ApplicationMetadata>(Binary);
+                if (HasResources)
+                    ResourcesBinary = ReadBinary(Manifest.Resources.Filename);
+
             }
+        }
+
+        private byte[] ReadBinary(string resname)
+        {
+            byte[] data;
+            using (Stream binstream = Bundle[resname].OpenReader())
+            {
+                byte[] buff = new byte[2048];
+                using (MemoryStream ms = new MemoryStream())
+                {
+                    int read;
+                    while ((read = binstream.Read(buff, 0, buff.Length)) > 0)
+                    {
+                        ms.Write(buff, 0, read);
+                    }
+                    data= ms.ToArray();
+                }
+            }
+            return data;
         }
 
         public override string ToString()

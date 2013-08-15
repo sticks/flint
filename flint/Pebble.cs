@@ -5,6 +5,7 @@ using System.Management;
 using System.Text;
 using InTheHand.Net.Bluetooth;
 using InTheHand.Net.Sockets;
+using System.Threading;
 
 namespace flint
 {
@@ -188,7 +189,6 @@ namespace flint
             RegisterEndpointCallback(Endpoints.PHONE_VERSION, PhoneVersionReceived);
             RegisterEndpointCallback(Endpoints.VERSION, VersionReceived);
             RegisterEndpointCallback(Endpoints.APP_MANAGER, AppbankStatusResponseReceived);
-            RegisterEndpointCallback(Endpoints.PUT_BYTES, PutBytesReceived);
 
             pingTimer = new System.Timers.Timer(16180);
             pingTimer.Elapsed += pingTimer_Elapsed;
@@ -382,7 +382,7 @@ namespace flint
             }
         }
 
-        #region Messages to Pebble
+       #region Messages to Pebble
 
         /// <summary> Send the Pebble a ping. </summary>
         /// <param name="cookie"></param>
@@ -477,14 +477,8 @@ namespace flint
         /// <param name="dt">The desired DateTime.  Doesn't care about timezones.</param>
         public void SetTime(DateTime dt)
         {
-            byte[] data = { 2 };
             int timestamp = (int)(dt - new DateTime(1970, 1, 1)).TotalSeconds;
-            byte[] _timestamp = BitConverter.GetBytes(timestamp);
-            if (BitConverter.IsLittleEndian)
-            {
-                Array.Reverse(_timestamp);
-            }
-            data = data.Concat(_timestamp).ToArray();
+            byte[] data = Util.Pack("!bI", 2, timestamp);
             sendMessage(Endpoints.TIME, data);
         }
 
@@ -495,7 +489,7 @@ namespace flint
             sendMessage(Endpoints.PING, cookie);
         }
 
-        #endregion
+        #endregion 
 
         #region Requests to send to Pebble
 
@@ -554,6 +548,34 @@ namespace flint
             }
         }
 
+        public void InstallApp(string path, int firstFree/*TODO, bool installApp*/)
+        {
+            PebbleBundle bundle = new PebbleBundle(path);
+            if (bundle.BundleType != PebbleBundle.BundleTypes.Application)
+            {
+                throw new Exception("not an app");
+            }
+            PutBytesClient c = new PutBytesClient(this, (uint)firstFree, PutBytesType.Binary, bundle.Binary);
+            c.init();
+            while (!c.IsDone && !c.HasError)
+                Thread.Sleep(1000);
+            if (c.HasError)
+                throw new Exception("couldn't send app");
+            if (bundle.HasResources)
+            {
+                c = new PutBytesClient(this, (uint)firstFree, PutBytesType.Resources, bundle.ResourcesBinary);
+                c.init();
+                while (!c.IsDone && !c.HasError)
+                    Thread.Sleep(1000);
+                if (c.HasError)
+                    throw new Exception("couldn't send resources");
+            }
+            var msg = Util.Pack("!bI", 3, firstFree);
+            Thread.Sleep(2000);
+            sendMessage(Endpoints.APP_MANAGER, msg);
+            Thread.Sleep(2000);
+        }
+
         /// <summary>
         /// Remove an app from the Pebble, using an App instance retrieved from the Appbank.
         /// </summary>
@@ -563,15 +585,7 @@ namespace flint
         /// <returns></returns>
         public AppbankInstallMessageEventArgs RemoveApp(AppBank.App app, bool async = false)
         {
-            byte[] msg = new byte[1];
-            msg[0] = 2;
-            msg = msg.Concat(BitConverter.GetBytes(app.ID)).ToArray();
-            msg = msg.Concat(BitConverter.GetBytes(app.Index)).ToArray();
-            if (BitConverter.IsLittleEndian)
-            {
-                Array.Reverse(msg, 1, 4);
-                Array.Reverse(msg, 5, 4);
-            }
+            var msg = Util.Pack("!bII", 2, app.ID, app.Index);
             sendMessage(Endpoints.APP_MANAGER, msg);
             if (!async)
             {
@@ -602,7 +616,7 @@ namespace flint
             {
                 pebbleProt.sendMessage((ushort)endpoint, payload);
             }
-            catch (TimeoutException e)
+            catch (TimeoutException )
             {
                 Disconnect();
             }
@@ -665,17 +679,7 @@ namespace flint
 
         void PhoneVersionReceived(object sender, MessageReceivedEventArgs e)
         {
-            byte[] prefix = { 0x01, 0xFF, 0xFF, 0xFF, 0xFF };
-            byte[] session = BitConverter.GetBytes(sessionCaps);
-            byte[] remote = BitConverter.GetBytes(remoteCaps);
-            if (BitConverter.IsLittleEndian)
-            {
-                Array.Reverse(session);
-                Array.Reverse(remote);
-            }
-
-            byte[] msg = new byte[0];
-            msg = msg.Concat(prefix).Concat(session).Concat(remote).ToArray();
+            var msg = Util.Pack("!bBBBBII",0x01,0xFF,0xFF,0xFF,0xFF,sessionCaps,remoteCaps);
             sendMessage(Endpoints.PHONE_VERSION, msg);
         }
 
@@ -737,5 +741,6 @@ namespace flint
         }
 
         #endregion
+
     }
 }
