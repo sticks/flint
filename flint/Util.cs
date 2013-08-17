@@ -22,7 +22,7 @@ namespace flint
         private static bool isString(string format, int i, out int slen, out int digcount)
         {
             char c = format[i];
-            slen = 0;
+            slen = 1;
             digcount = 0;
             while (((i + digcount) < format.Length) && c >= '0' && c <= '9')
             {
@@ -31,14 +31,11 @@ namespace flint
             }
             if (digcount > 0)
             {
-                if (c != 's')
-                    throw new ArgumentOutOfRangeException("format", format, "only 's' can follow digits");
-                slen += Int32.Parse(format.Substring(i, digcount));
-                return true; // past digits but not s
+                slen = Int32.Parse(format.Substring(i, digcount));
+                return c == 's';
             }
             if (c == 's') // special case of missing count
             {
-                slen = 1;
                 return true;
             }
             return false;
@@ -70,13 +67,13 @@ namespace flint
                 switch (c)
                 {
                     case 'b':
-                    case 'B': flen++; break;
+                    case 'B': flen+=(slen); break;
                     case 'l':
                     case 'L':
                     case 'i':
-                    case 'I': flen += 4; break;
+                    case 'I': flen += (slen*4); break;
                     case 'h':
-                    case 'H': flen += 2; break;
+                    case 'H': flen += (slen*2); break;
                     case '!': break;
                     default: throw new ArgumentOutOfRangeException("format", format, "Unknown format character");
                 }
@@ -127,61 +124,66 @@ namespace flint
                     fpos += spos;
                     continue;
                 }
+                // skip past any repeat markers
+                fpos += spos;
                 char c = format[fpos];
-                switch (c)
+                for (int repeat = 0; repeat < slen; ++repeat)
                 {
-                    case 'b':
-                        {
-                            items.Add((sbyte)data[dpos++]);
-                        }
-                        break;
-                    case 'B':
-                        {
-                            items.Add(data[dpos++]);
-                        }
-                        break;
-                    case 'i':
-                    case 'I':
-                    case 'l':
-                    case 'L':
-                    case 'h':
-                    case 'H':
-                        {
-                            bool isShort = c == 'h' || c == 'H';
-                            bool isSigned = Char.IsLower(c);
-                            int nlen = isShort ? 2 : 4;
-                            var bytes = data.Skip(dpos).Take(nlen);
-                            if (BitConverter.IsLittleEndian && networkOrder)
-                                bytes = bytes.Reverse();
-                            if (isSigned)
+                    switch (c)
+                    {
+                        case 'b':
                             {
-                                if (isShort)
+                                items.Add((sbyte)data[dpos++]);
+                            }
+                            break;
+                        case 'B':
+                            {
+                                items.Add(data[dpos++]);
+                            }
+                            break;
+                        case 'i':
+                        case 'I':
+                        case 'l':
+                        case 'L':
+                        case 'h':
+                        case 'H':
+                            {
+                                bool isShort = c == 'h' || c == 'H';
+                                bool isSigned = Char.IsLower(c);
+                                int nlen = isShort ? 2 : 4;
+                                var bytes = data.Skip(dpos).Take(nlen);
+                                if (BitConverter.IsLittleEndian && networkOrder)
+                                    bytes = bytes.Reverse();
+                                if (isSigned)
                                 {
-                                    short s = BitConverter.ToInt16(bytes.ToArray(), 0);
-                                    items.Add(s);
+                                    if (isShort)
+                                    {
+                                        short s = BitConverter.ToInt16(bytes.ToArray(), 0);
+                                        items.Add(s);
+                                    }
+                                    else
+                                    {
+                                        int i = BitConverter.ToInt32(bytes.ToArray(), 0);
+                                        items.Add(i);
+                                    }
                                 }
                                 else
                                 {
-                                    int i = BitConverter.ToInt32(bytes.ToArray(), 0);
-                                    items.Add(i);
+                                    if (isShort)
+                                    {
+                                        ushort s = BitConverter.ToUInt16(bytes.ToArray(), 0);
+                                        items.Add(s);
+                                    }
+                                    else
+                                    {
+                                        uint i = BitConverter.ToUInt32(bytes.ToArray(), 0);
+                                        items.Add(i);
+                                    }
                                 }
+                                dpos += nlen;
                             }
-                            else
-                            {
-                                if (isShort)
-                                {
-                                    ushort s = BitConverter.ToUInt16(bytes.ToArray(), 0);
-                                    items.Add(s);
-                                }
-                                else
-                                {
-                                    uint i = BitConverter.ToUInt32(bytes.ToArray(), 0);
-                                    items.Add(i);
-                                }
-                            }
-                            dpos += nlen;
-                        }
-                        break;
+                            break;
+                    }
                 }
             }
             return items.ToArray();
@@ -208,79 +210,85 @@ namespace flint
             var fpos = 0;
             bool networkOrder = format[0] == '!';
             if (networkOrder) fpos++;
-            for (int ipos=0,dpos=0; dpos < len; ++fpos,++ipos)
+            for (int ipos=0,dpos=0; dpos < len; ++fpos)
             {
-                object item = items[ipos];
                 int slen,spos;
-                if (isString(format,fpos,out slen,out spos))
+                if (isString(format, fpos, out slen, out spos))
                 {
+                    var item = items[ipos++];
                     if (slen != 0) // special case, empty string
                     {
                         var sbytes = Encoding.UTF8.GetBytes((string)item);
-                        Array.Copy(sbytes, 0, data, dpos, Math.Min(sbytes.Length,slen)); // only copy how many bytes they claim they want or they actually have
+                        Array.Copy(sbytes, 0, data, dpos, Math.Min(sbytes.Length, slen)); // only copy how many bytes they claim they want or they actually have
                         dpos += slen;
                     }
                     fpos += spos;
                     continue;
                 }
+                // skip past any repeat markers
+                fpos += spos;
                 char c = format[fpos];
-                switch (c)
+                for (int repeat = 0; repeat < slen; ++repeat)
                 {
-                    case 'b':
-                        {
-                            data[dpos++] = (byte)Convert.ToSByte(item);
-                        }
-                        break;
-                    case 'B':
-                        {
-                            data[dpos++] = Convert.ToByte(item);
-                        }
-                        break;
-                    case 'I':
-                    case 'i':
-                    case 'L':
-                    case 'l':
-                    case 'H':
-                    case 'h':
-                        {
-                            bool isShort = c == 'h' || c == 'H';
-                            bool isSigned = Char.IsLower(c);
-                            int nlen = isShort ? 2 : 4;
-                            var bytes = data.Skip(dpos).Take(nlen);
-                            byte[] arr;
-                            if (isSigned)
+                    var item = items[ipos++];
+                    switch (c)
+                    {
+                        case 'b':
                             {
-                                if (isShort)
+                                data[dpos++] = (byte)Convert.ToSByte(item);
+                            }
+                            break;
+                        case 'B':
+                            {
+                                data[dpos++] = Convert.ToByte(item);
+                            }
+                            break;
+                        case 'I':
+                        case 'i':
+                        case 'L':
+                        case 'l':
+                        case 'H':
+                        case 'h':
+                            {
+                                bool isShort = c == 'h' || c == 'H';
+                                bool isSigned = Char.IsLower(c);
+                                int nlen = isShort ? 2 : 4;
+                                var bytes = data.Skip(dpos).Take(nlen);
+                                byte[] arr;
+                                if (isSigned)
                                 {
-                                    short i = Convert.ToInt16(item);
-                                    arr = BitConverter.GetBytes(i);
+                                    if (isShort)
+                                    {
+                                        short i = Convert.ToInt16(item);
+                                        arr = BitConverter.GetBytes(i);
+                                    }
+                                    else
+                                    {
+                                        int i = Convert.ToInt32(item);
+                                        arr = BitConverter.GetBytes(i);
+                                    }
                                 }
                                 else
                                 {
-                                    int i = Convert.ToInt32(item);
-                                    arr = BitConverter.GetBytes(i);
+                                    if (isShort)
+                                    {
+                                        ushort i = Convert.ToUInt16(item);
+                                        arr = BitConverter.GetBytes(i);
+                                    }
+                                    else
+                                    {
+                                        uint i = Convert.ToUInt32(item);
+                                        arr = BitConverter.GetBytes(i);
+                                    }
                                 }
-                            }
-                            else
-                            {
-                                if (isShort)
-                                {
-                                    ushort i = Convert.ToUInt16(item);
-                                    arr = BitConverter.GetBytes(i);
-                                }
+                                if (networkOrder && BitConverter.IsLittleEndian)
+                                    arr.RCopyTo(data, dpos);
                                 else
-                                {
-                                    uint i = Convert.ToUInt32(item);
-                                    arr = BitConverter.GetBytes(i);
-                                }
+                                    arr.CopyTo(data, dpos);
+                                dpos += nlen;
                             }
-                            if (networkOrder && BitConverter.IsLittleEndian)
-                                arr.RCopyTo(data, dpos);
-                            else
-                                arr.CopyTo(data, dpos);
-                            dpos += nlen;
-                        }
-                        break;
+                            break;
+                    }
                 }
             }
             return data;

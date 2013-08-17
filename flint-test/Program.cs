@@ -4,6 +4,7 @@ using SharpMenu;
 using System.Collections.Generic;
 using System.Configuration;
 using System.IO;
+using System.Text;
 
 namespace flint_test
 {
@@ -11,9 +12,80 @@ namespace flint_test
     /// </summary>
     class Program
     {
+        static void p(string[] args)
+        {
+
+            Dictionary<string,string> argmap = new Dictionary<string,string>();
+            for (int i=0;i<args.Length;++i)
+            {
+                var arg = args[i];
+                if (arg == "--test")
+                {
+                    argmap["test"] = "yes";
+                }
+                else if (arg == "--pebble_id")
+                {
+                    var addr = i+1<args.Length?args[++i]:null;
+                    if (addr.Length > 4)
+                    {
+                        // assume BT addr or shortcut
+                        addr = addr.Replace(":","");
+                        addr = addr.Substring(addr.Length-4,4);
+                    }
+                    argmap["pebble_id"] = addr;
+                }
+                else if (arg == "--nolaunch")
+                {
+                    argmap["no_launch"] = "";
+                }
+                else if (arg == "load")
+                {
+                    argmap["load"] = i + 1 < args.Length ? args[++i] : null;
+                }
+                else if (arg == "reinstall")
+                {
+                    argmap["load"] = i + 1 < args.Length ? args[++i] : null;
+                    argmap["uninstall"] = argmap["load"];
+                }
+            }
+            if (argmap["test"] != null)
+            {
+                TestPack();
+                return;
+            }
+            var pebble = Pebble.GetPebble(argmap["pebble_id"]);
+            try
+            {
+                pebble.Connect();
+            }
+            catch (System.IO.IOException e)
+            {
+                Console.Write("Connection failed: ");
+                Console.WriteLine(e.Message);
+                Console.WriteLine("Press enter to exit.");
+                Console.ReadLine();
+                return;
+            }
+            Console.WriteLine("Successfully connected!");
+            Console.WriteLine(pebble);
+
+
+            if (argmap["load"] != null)
+            {
+                PebbleBundle pb = new PebbleBundle(argmap["load"]);
+                var uuid = pb.Application.UUID;
+                var apps = pebble.GetAppbankContents().AppBank.Apps;
+                var app = apps.Find(a => Encoding.ASCII.GetString(BitConverter.GetBytes(a.ID)) == uuid);
+
+            }
+        }
         static void Main(string[] args)
         {
-            TestPack();
+            if (args.Length > 0)
+            {
+                p(args);
+                return;
+            }
             Pebble pebble;
             SharpMenu<Action> menu;
             SharpMenu<Pebble> pebblemenu;
@@ -130,6 +202,13 @@ namespace flint_test
             if (((string)items[11]).Substring(0,5) != (string)ritems[11]) throw new Exception(); // longer than expected
             if ("" != (string)ritems[12]) throw new Exception(); // empty string
             if ((string)items[13] != (string)ritems[13]) throw new Exception(); // implied string length of 1
+
+            items = new object[] { Byte.MaxValue, (byte)100,ushort.MaxValue };
+            data = Util.Pack("!2BH", items);
+            ritems = Util.Unpack("!2BH", data);
+            if ((byte)items[0] != (byte)ritems[0]) throw new Exception();
+            if ((byte)items[1] != (byte)ritems[1]) throw new Exception();
+            if ((ushort)items[2] != (ushort)ritems[2]) throw new Exception();
 #endif
         }
 
