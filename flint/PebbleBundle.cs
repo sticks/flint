@@ -147,6 +147,7 @@ namespace flint
 
             // The data as stored in the binary
             [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 8)]
+            [PackCount(8)]
             public readonly String header;
             [MarshalAs(UnmanagedType.U1)]
             public readonly byte StructMajorVersion;
@@ -181,12 +182,21 @@ namespace flint
             [MarshalAs(UnmanagedType.U4)]
             public readonly uint RelocationListItemCount;
             [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 16)]
-            public readonly String UUID;
+            [PackCount(16)]
+            public readonly byte[] RawUUID;
 
             public override string ToString()
             {
                 String format = "{0}, version {1}.{2} by {3}";
                 return String.Format(format, AppName, AppMajorVersion, AppMinorVersion, CompanyName);
+            }
+            public string UUID
+            {
+                get
+                {
+                    var items = Util.Unpack("!ihh8S",RawUUID);
+                    return new Guid((int)items[0],(short)items[1],(short)items[2],(byte[])items[3]).ToString();
+                }
             }
         }
 

@@ -610,7 +610,7 @@ namespace flint
         /// <param name="endpoint"></param>
         /// <param name="payload"></param>
         /// <exception cref="ArgumentOutOfRangeException">Passed on when the payload is too large.</exception>
-        void sendMessage(Endpoints endpoint, byte[] payload)
+        public void sendMessage(Endpoints endpoint, byte[] payload)
         {
             try
             {

@@ -19,22 +19,25 @@ namespace flint
         public struct App
         {
             [MarshalAs(UnmanagedType.U4)]
-            public readonly int ID;
+            public readonly uint ID;
             [MarshalAs(UnmanagedType.U4)]
-            public readonly int Index;
+            public readonly uint Index;
             [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)]
             public readonly String Name;
             [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)]
             public readonly String Company;
             [MarshalAs(UnmanagedType.U4)]
-            public readonly int Flags;
+            public readonly uint Flags;
+            /*
             [MarshalAs(UnmanagedType.U1)]
             public readonly byte MajorVersion;
             [MarshalAs(UnmanagedType.U1)]
             public readonly byte MinorVersion;
+             * */
+            public readonly ushort RawVersion;
             /// <summary> A string representation of the app version. </summary>
-            public String Version { get { return String.Format("{0}.{1}", MajorVersion, MinorVersion); } }
-
+            //public String Version { get { return String.Format("{0}.{1}", MajorVersion, MinorVersion); } }
+            public String Version { get { return String.Format("{0}.{1}", RawVersion >> 8 , (byte)RawVersion); } }
             public override string ToString()
             {
                 String format = "{0}, version {1} by {2}";
@@ -61,15 +64,11 @@ namespace flint
                 throw new ArgumentOutOfRangeException("Payload is shorter than 9 bytes, "+
                     "which is the minimum size for an appbank content response.");
             }
+            var items = Util.Unpack("!bII", bytes);
             
-            if (BitConverter.IsLittleEndian)
-            {
-                Array.Reverse(bytes, 1, 4);
-                Array.Reverse(bytes, 5, 4);
-            }
-            Size = BitConverter.ToUInt32(bytes, 1);
-            
-            uint appcount = BitConverter.ToUInt32(bytes, 5);
+            Size = (uint)items[1];
+
+            uint appcount = (uint)items[2];
             if (bytes.Count() < headersize + appcount * appinfosize)
             {
                 throw new ArgumentOutOfRangeException("Payload is not large enough for the claimed number of installed apps.");
@@ -78,6 +77,10 @@ namespace flint
             for (int i = 0; i < appcount; i++)
             {
                 Apps.Add(AppFromBytes(bytes.Skip(headersize + i * appinfosize).Take(appinfosize).ToArray()));
+            }
+            foreach (var app in Apps)
+            {
+                Console.WriteLine("{0} {1} {2}", app.ID, app.Index, app.Version);
             }
         }
 

@@ -8,6 +8,14 @@ using System.Threading.Tasks;
 
 namespace flint
 {
+    public class PackCountAttribute : Attribute
+    {
+        public int Size { get; private set; }
+        public PackCountAttribute(int size)
+        {
+            Size = size;
+        }
+    }
 
     public static class Util
     {
@@ -16,14 +24,15 @@ namespace flint
         /// </summary>
         /// <param name="format">format string</param>
         /// <param name="i">cur index into format string</param>
-        /// <param name="slen">length of string</param>
+        /// <param name="slen">length of string OR number of repeats</param>
         /// <param name="digcount">number of digits consumed by string def</param>
         /// <returns>number of format characters subsumed by string</returns>
-        private static bool isString(string format, int i, out int slen, out int digcount)
+        private static bool isPacked(string format, int i, out int slen, out int digcount, out bool isByteArray)
         {
             char c = format[i];
             slen = 1;
             digcount = 0;
+            isByteArray = false;
             while (((i + digcount) < format.Length) && c >= '0' && c <= '9')
             {
                 digcount++;
@@ -32,7 +41,8 @@ namespace flint
             if (digcount > 0)
             {
                 slen = Int32.Parse(format.Substring(i, digcount));
-                return c == 's';
+                isByteArray = c == 'S';
+                return isByteArray || c == 's';
             }
             if (c == 's') // special case of missing count
             {
@@ -45,24 +55,20 @@ namespace flint
         /// </summary>
         /// <param name="format">format string to inspect</param>
         /// <returns>size of byte[] encoded by format string</returns>
-        private static int dataSize(string format)
+        public static int GetPackedDataSize(string format)
         {
             int flen = 0;
             for(int i=0;i<format.Length;++i)
             {
+                bool isByteArray;
                 int slen,spos;
-                if (isString(format, i, out slen, out spos))
+                if (isPacked(format, i, out slen, out spos, out isByteArray))
                 {
                     flen += slen;
                     i += spos;
                     continue;
                 }
-                if (spos>0)
-                {
-                    flen += slen;
-                    i += spos;
-                    continue;
-                }
+                i += spos;
                 char c = format[i];
                 switch (c)
                 {
@@ -88,6 +94,7 @@ namespace flint
         /// i/I signed/unsigned int (4 bytes)
         /// l/L signed/unsigned long (4 bytes)
         /// [size]s string (with optional size, defaults to 1); '0s' means empty string
+        /// [size]S byte[] as single item (extension to python because of problems with encoding bytes > 127 into a string
         /// </summary>
         /// <param name="format">Only '!bBhHlLiI[xx]s' are implemented</param>
         /// <param name="data">packed byte array</param>
@@ -95,7 +102,7 @@ namespace flint
 
         public static object[] Unpack(string format, byte[] data)
         {
-            int dlen = dataSize(format);
+            int dlen = GetPackedDataSize(format);
             // allow sloppy unpacking so that the beginning of a byte[] can contain packed info
             if (data.Length < dlen)
                 throw new Exception("unexpected number of bytes");
@@ -108,17 +115,27 @@ namespace flint
             for (int dpos = 0; fpos < flen; ++fpos)
             {
                 int slen, spos;
-                if (isString(format, fpos, out slen, out spos))
+                bool isBytes;
+                if (isPacked(format, fpos, out slen, out spos, out isBytes))
                 {
                     if (slen == 0) // special case empty string
                         items.Add("");
                     else
                     {
-                        int shrinkNulls = slen; // s'posed to ignore nulls within slen
-                        while (data[dpos + shrinkNulls-1] == 0)
-                            shrinkNulls--;
-                        var s = Encoding.UTF8.GetString(data, dpos, shrinkNulls);
-                        items.Add(s);
+                        if (isBytes)
+                        {
+                            var slice = new byte[slen];
+                            Array.Copy(data, dpos, slice, 0, slen);
+                            items.Add(slice);
+                        }
+                        else
+                        {
+                            int shrinkNulls = slen; // s'posed to ignore nulls within slen
+                            while (data[dpos + shrinkNulls - 1] == 0)
+                                shrinkNulls--;
+                            var s = Encoding.UTF8.GetString(data, dpos, shrinkNulls);
+                            items.Add(s);
+                        }
                         dpos += slen;
                     }
                     fpos += spos;
@@ -202,7 +219,7 @@ namespace flint
         /// <returns>packed byte array</returns>
         public static byte[] Pack(string format, params object[] items)
         {
-            int len = dataSize(format);
+            int len = GetPackedDataSize(format);
             if (len == 0)
                 throw new Exception("no format string");
 
@@ -213,12 +230,17 @@ namespace flint
             for (int ipos=0,dpos=0; dpos < len; ++fpos)
             {
                 int slen,spos;
-                if (isString(format, fpos, out slen, out spos))
+                bool isBytes;
+                if (isPacked(format, fpos, out slen, out spos, out isBytes))
                 {
                     var item = items[ipos++];
                     if (slen != 0) // special case, empty string
                     {
-                        var sbytes = Encoding.UTF8.GetBytes((string)item);
+                        byte[] sbytes;
+                        if (isBytes)
+                            sbytes = (byte[])item;
+                        else
+                            sbytes = Encoding.UTF8.GetBytes((string)item);
                         Array.Copy(sbytes, 0, data, dpos, Math.Min(sbytes.Length, slen)); // only copy how many bytes they claim they want or they actually have
                         dpos += slen;
                     }
@@ -350,8 +372,101 @@ namespace flint
             return ret;
 
         }
+        public static string CreateFormat<T>()
+        {
+            var stype = typeof(T);
+            var format = new StringBuilder();
+            var fields = stype.GetFields();
+            var fieldsLen = fields.Length;
+            for (int f=0;f<fieldsLen;++f)
+            {
+                var field = fields[f];
+                var ftype = field.FieldType;
+                int packCount = -1;
+                var pcatt = field.GetCustomAttributes(typeof(PackCountAttribute),false);
+                if (pcatt.Length>0) packCount = ((PackCountAttribute)pcatt.GetValue(0)).Size;
+                if (ftype == typeof(string))
+                {
+                    if (packCount <= 0)
+                    {
+                        pcatt = field.GetCustomAttributes(typeof(MarshalAsAttribute), false);
+                        if (pcatt.Length > 0) packCount = ((MarshalAsAttribute)pcatt.GetValue(0)).SizeConst;
+                        if (packCount<=0)
+                            throw new Exception("String fields must have PackString attribute defined");
+                    }
+                    format.Append(packCount.ToString());
+                    format.Append("s");
+                    continue;
+                }
+                int count = 1;
+                int ff;
+                for (ff = f+1; ff < fieldsLen; ++ff, ++count) 
+                {
+                    if (fields[ff].FieldType != ftype) break;
+                }
+                if (count > 1)
+                {
+                    format.Append(count.ToString());
+                    f += ff -(f+1);
+                }
+                if (field.FieldType == typeof(Int32))
+                {
+                    format.Append("i");
+                }
+                else if (field.FieldType == typeof(UInt32))
+                {
+                    format.Append("I");
+                }
+                else if (field.FieldType == typeof(Int16))
+                {
+                    format.Append("h");
+                }
+                else if (field.FieldType == typeof(UInt16))
+                {
+                    format.Append("H");
+                }
+                else if (field.FieldType == typeof(sbyte))
+                {
+                    format.Append("b");
+                }
+                else if (field.FieldType == typeof(byte))
+                {
+                    format.Append("B");
+                }
+                else if (packCount > 0) // fallback byte array
+                {
+                    format.AppendFormat("{0}S", packCount);
+                }
+            }
+
+            return format.ToString();
+        }
 
         public static T ReadStruct<T>(byte[] bytes) where T : struct
+        {
+            var format = CreateFormat<T>();
+            format = "!" + format;
+            var items = Util.Unpack(format, bytes);
+
+            // populate values
+            var stype = typeof(T);
+            var fields = stype.GetFields();
+            var fieldsLen = fields.Length;
+            if (items.Length != fieldsLen)
+                throw new ArgumentOutOfRangeException("unpacked structure does not match struct definition");
+            T t = new T();
+            object o = t;
+            fields = t.GetType().GetFields();
+            for (int f = 0; f < fieldsLen; ++f)
+            {
+                var field = fields[f];
+                field.SetValue(o, items[f]);
+            }
+            return (T)o;
+
+        }
+
+        public static T OldReadStruct<T>(byte[] bytes) where T : struct
         {
             ntoh(typeof(T), bytes);
 

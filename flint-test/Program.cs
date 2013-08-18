@@ -14,8 +14,10 @@ namespace flint_test
     {
         static void p(string[] args)
         {
-
+            //https://github.com/Hexxeh/libpebble/blob/master/pebble/pebble.py
             Dictionary<string,string> argmap = new Dictionary<string,string>();
+            argmap["pebble_id"]=null;
+
             for (int i=0;i<args.Length;++i)
             {
                 var arg = args[i];
@@ -38,6 +40,10 @@ namespace flint_test
                 {
                     argmap["no_launch"] = "";
                 }
+                else if (arg == "list")
+                {
+                    argmap["list"] = "";
+                }
                 else if (arg == "load")
                 {
                     argmap["load"] = i + 1 < args.Length ? args[++i] : null;
@@ -45,10 +51,10 @@ namespace flint_test
                 else if (arg == "reinstall")
                 {
                     argmap["load"] = i + 1 < args.Length ? args[++i] : null;
-                    argmap["uninstall"] = argmap["load"];
+                    argmap["unload"] = argmap["load"];
                 }
             }
-            if (argmap["test"] != null)
+            if (argmap.ContainsKey("test"))
             {
                 TestPack();
                 return;
@@ -69,13 +75,21 @@ namespace flint_test
             Console.WriteLine("Successfully connected!");
             Console.WriteLine(pebble);
 
-
-            if (argmap["load"] != null)
+            if (argmap.ContainsKey("list"))
             {
-                PebbleBundle pb = new PebbleBundle(argmap["load"]);
-                var uuid = pb.Application.UUID;
-                var apps = pebble.GetAppbankContents().AppBank.Apps;
-                var app = apps.Find(a => Encoding.ASCII.GetString(BitConverter.GetBytes(a.ID)) == uuid);
+                Console.WriteLine(pebble.GetAppbankContents().AppBank);
+            }
+            else if (argmap.ContainsKey("load"))
+            {
+                if (argmap.ContainsKey("unload"))
+                {
+                    PebbleBundle pb = new PebbleBundle(argmap["load"]);
+                    var apps = pebble.GetAppbankContents().AppBank.Apps;
+                    var app = apps.Find(a => pb.Application.AppName == a.Name);
+                    if (app.Name != null) // in case it didn't find it
+                        pebble.RemoveApp(app);
+                }
+                AddApp(pebble, argmap["load"]);
 
             }
         }
@@ -209,21 +223,31 @@ namespace flint_test
             if ((byte)items[0] != (byte)ritems[0]) throw new Exception();
             if ((byte)items[1] != (byte)ritems[1]) throw new Exception();
             if ((ushort)items[2] != (ushort)ritems[2]) throw new Exception();
+            ritems = Util.Unpack("!2SH",data); // interpret as byte[]
+            if (!System.Linq.Enumerable.SequenceEqual(new byte[]{Byte.MaxValue,(byte)100}, (byte[]) ritems[0])) throw new Exception();
+            if ((ushort)items[2] != (ushort)ritems[1]) throw new Exception();
+
+            if (Util.GetPackedDataSize("!II32s32sIH") != 78) throw new Exception();
+            if (Util.GetPackedDataSize("!2i32s32si2B") != 78) throw new Exception();
 #endif
         }
 
-        static void AddApp(Pebble pebble)
+        static void AddApp(Pebble pebble, string watch=null)
         {
-            var watchdir = ConfigurationManager.AppSettings["watch-dir"];
-            if (watchdir == null)
+            string watchdir=null;
+            if (String.IsNullOrEmpty(watch))
             {
-                Console.WriteLine("Missing .config entry for 'watch-dir'");
-                return;
-            }
-            if (!Directory.Exists(watchdir))
-            {
-                Console.WriteLine("watch-dir not found: {0}", watchdir);
-                return;
+                watchdir = ConfigurationManager.AppSettings["watch-dir"];
+                if (watchdir == null)
+                {
+                    Console.WriteLine("Missing .config entry for 'watch-dir'");
+                    return;
+                }
+                if (!Directory.Exists(watchdir))
+                {
+                    Console.WriteLine("watch-dir not found: {0}", watchdir);
+                    return;
+                }
             }
             var appbank = pebble.GetAppbankContents().AppBank;
             var applist = appbank.Apps;
@@ -234,10 +258,14 @@ namespace flint_test
             }
             try
             {
-                Console.WriteLine("Choose an app to install");
-                var watches = Directory.GetFiles(watchdir,"*.pbw");
-                var result = SharpMenu<string>.WriteAndPrompt(watches);
-                pebble.InstallApp(Path.Combine(watchdir,result),applist.Count);
+                if (String.IsNullOrEmpty(watch))
+                {
+                    Console.WriteLine("Choose an app to install");
+                    var watches = Directory.GetFiles(watchdir, "*.pbw");
+                    watch = SharpMenu<string>.WriteAndPrompt(watches);
+                    watch = Path.Combine(watchdir, watch);
+                }
+                pebble.InstallApp(watch,applist.Count);
             }
             catch(Exception ex)
             {

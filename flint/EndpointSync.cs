@@ -38,10 +38,12 @@ namespace flint
             DateTime start = DateTime.Now;
             while (!this.Triggered)
             {
+#if !DEBUG
                 if ((DateTime.Now - start).TotalMilliseconds > timeout)
                 {
                     throw new TimeoutException();
                 }
+#endif
                 Thread.Sleep(delay);
             }
             return Result;
