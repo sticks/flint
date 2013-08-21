@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.Configuration;
 using System.IO;
 using System.Text;
+using System.Threading;
 
 namespace flint_test
 {
@@ -162,10 +163,11 @@ namespace flint_test
             menu.Add(() => pebble.SetNowPlaying("That dude", "That record", "That track"), "Send some metadata to the music app");
             menu.Add(() => pebble.BadPing(), "Send a bad ping to trigger a LOGS response");
             menu.Add(() => Console.WriteLine(pebble.GetTime().Time), "Get the time from the Pebble");
-            menu.Add(() => pebble.SetTime(DateTime.Now), "Sync Pebble time");
+            menu.Add(() => SetTime(pebble), "Set Pebble time");
             menu.Add(() => Console.WriteLine(pebble.GetAppbankContents().AppBank), "Get the contents of the app bank");
             menu.Add(() => DeleteApp(pebble), "Delete an app from the Pebble");
             menu.Add(() => AddApp(pebble), "Add an app");
+            menu.Add(() => AddApp(pebble,null,true), "Reinstall an app");
             menu.Add(() => pebble.Disconnect(), "Exit");
 
             pebble.OnDisconnect += pebble_OnDisconnect;
@@ -189,6 +191,27 @@ namespace flint_test
                 // To account for disconnects during the prompt:
                 if (pebble.Alive) act();
             }
+        }
+
+        private static void SetTime(Pebble pebble)
+        {
+            Console.WriteLine("Enter time <current>:");
+            var time = Console.ReadLine();
+            if (String.IsNullOrEmpty(time))
+                pebble.SetTime(DateTime.Now);
+            else
+            {
+                DateTime result;
+                if (DateTime.TryParse(time, out result))
+                {
+                    pebble.SetTime(result);
+                }
+                else
+                {
+                    Console.WriteLine("invalid time");
+                }
+            }
+
         }
         static void TestPack()
         {
@@ -232,7 +255,7 @@ namespace flint_test
 #endif
         }
 
-        static void AddApp(Pebble pebble, string watch=null)
+        static void AddApp(Pebble pebble, string watch=null, bool removeFirst = false)
         {
             string watchdir=null;
             if (String.IsNullOrEmpty(watch))
@@ -265,7 +288,20 @@ namespace flint_test
                     watch = SharpMenu<string>.WriteAndPrompt(watches);
                     watch = Path.Combine(watchdir, watch);
                 }
-                pebble.InstallApp(watch,applist.Count);
+                if (removeFirst)
+                {
+                    PebbleBundle pb = new PebbleBundle(watch);
+                    var app2remove = applist.Find(delegate(AppBank.App app) { return app.Name == pb.Application.AppName; });
+                    if (app2remove.Name != null)
+                    {
+                        Console.WriteLine("Removing existing...");
+                        pebble.RemoveApp(app2remove);
+                        Thread.Sleep(2000); // let things settle
+                    }
+
+                }
+                Console.WriteLine("Installing...");
+                pebble.InstallApp(watch, applist.Count);
             }
             catch(Exception ex)
             {
